@@ -1,7 +1,7 @@
 //============================================================================
 //
 //  Menu for MiSTer.
-//  Copyright (C) 2017,2018 Sorgelig
+//  Copyright (C) 2017-2019 Sorgelig
 //
 //
 //  This program is free software; you can redistribute it and/or modify it
@@ -27,10 +27,9 @@ module emu
 	//Async reset from top-level module.
 	//Can be used as initial reset.
 	input         RESET,
-	output        RESET_OUT,
 
 	//Must be passed to hps_io module
-	inout  [44:0] HPS_BUS,
+	inout  [45:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        CLK_VIDEO,
@@ -43,13 +42,14 @@ module emu
 	output  [7:0] VIDEO_ARX,
 	output  [7:0] VIDEO_ARY,
 
-	input         PAL,
 	output  [7:0] VGA_R,
 	output  [7:0] VGA_G,
 	output  [7:0] VGA_B,
 	output        VGA_HS,
 	output        VGA_VS,
 	output        VGA_DE,    // = ~(VBlank | HBlank)
+	output        VGA_F1,
+	output [1:0]  VGA_SL,
 
 	output        LED_USER,  // 1 - ON, 0 - OFF.
 
@@ -59,21 +59,25 @@ module emu
 	output  [1:0] LED_POWER,
 	output  [1:0] LED_DISK,
 
+	// I/O board button press simulation (active high)
+	// b[1]: user button
+	// b[0]: osd button
+	output  [1:0] BUTTONS,
+
 	output [15:0] AUDIO_L,
 	output [15:0] AUDIO_R,
 	output        AUDIO_S,   // 1 - signed audio samples, 0 - unsigned
 	output  [1:0] AUDIO_MIX, // 0 - no mix, 1 - 25%, 2 - 50%, 3 - 100% (mono)
-	input         TAPE_IN,
 
-	// SD-SPI
+	//ADC
+	inout   [3:0] ADC_BUS,
+
+	//SD-SPI
 	output        SD_SCK,
 	output        SD_MOSI,
 	input         SD_MISO,
 	output        SD_CS,
 	input         SD_CD,
-
-	output  [2:0] PATTERN,
-	output reg    DIM,
 
 	//High latency DDR3 RAM interface
 	//Use for non-critical time purposes
@@ -100,38 +104,53 @@ module emu
 	output        SDRAM_nCAS,
 	output        SDRAM_nRAS,
 	output        SDRAM_nWE,
-	
+
 	input         UART_CTS,
 	output        UART_RTS,
 	input         UART_RXD,
 	output        UART_TXD,
 	output        UART_DTR,
-	input         UART_DSR
+	input         UART_DSR,
+
+	// Open-drain User port.
+	// 0 - D+/RX
+	// 1 - D-/TX
+	// 2..6 - USR2..USR6
+	// Set USER_OUT to 1 to read from USER_IN.
+	input   [6:0] USER_IN,
+	output  [6:0] USER_OUT,
+
+	input         OSD_STATUS
 );
 
+assign ADC_BUS  = 'Z;
+assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
 assign DDRAM_CLK = clk_sys;
 assign CE_PIXEL  = ce_pix;
 
-assign VIDEO_ARX = 16;
-assign VIDEO_ARY = 9;
+assign VGA_SL = 0;
+assign VGA_F1 = 0;
+assign VIDEO_ARX = 0;
+assign VIDEO_ARY = 0;
 
 assign AUDIO_S = 0;
 assign AUDIO_L = 0;
 assign AUDIO_R = 0;
 assign AUDIO_MIX = 0;
 
-assign LED_DISK[1] = 1;
-assign LED_POWER   = 0;
+assign LED_DISK = 0;
+assign LED_POWER[1]= 1;
+assign BUTTONS = 0;
 
 reg  [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1; 
-assign LED_USER    = act_cnt[26]  ? act_cnt[25:18] > act_cnt[7:0]   : act_cnt[25:18] <= act_cnt[7:0];
+assign LED_USER    = FB ? led[0] : act_cnt[26]  ? act_cnt[25:18]  > act_cnt[7:0]  : act_cnt[25:18]  <= act_cnt[7:0];
 
-wire [26:0] act_cnt2 = act_cnt + 27'b100000000000000000000000000;
-assign LED_DISK[0] = act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0] : act_cnt2[25:18] <= act_cnt2[7:0];
+wire [26:0] act_cnt2 = {~act_cnt[26],act_cnt[25:0]};
+assign LED_POWER[0]= FB ? led[2] : act_cnt2[26] ? act_cnt2[25:18] > act_cnt2[7:0] : act_cnt2[25:18] <= act_cnt2[7:0];
 
 
 localparam CONF_STR = {
@@ -153,13 +172,12 @@ hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
 
 	.buttons(buttons),
 	.status(status),
+	.status_menumask(cfg),
 	
 	.ps2_key(ps2_key)
 );
 
-assign RESET_OUT = buttons[1];
-assign PATTERN = status[3:1];
-
+/*
 always @(posedge CLK_50M) begin
 	integer sec, to;
 	reg old_stb;
@@ -175,7 +193,7 @@ always @(posedge CLK_50M) begin
 	old_stb <= ps2_key[10];
 	if((old_stb ^ ps2_key[10]) || status[0] || buttons[1]) to <= 0;
 end
-
+*/
 
 ////////////////////   CLOCKS   ///////////////////
 wire locked, clk_sys;
@@ -201,13 +219,100 @@ sdram sdr
 	.*,
 	.init(~locked),
 	.clk(clk_sys),
-	.addr(addr[24:0]),
+	.addr(sdram_addr),
 	.wtbt(3),
-	.dout(),
-	.din(0),
-	.rd(0),
-	.ready()
+	.dout(sdram_dout),
+	.din(sdram_din),
+	.rd(sdram_rd),
+	.we(sdram_we),
+	.ready(sdram_ready)
 );
+
+reg  [26:0] sdram_addr;
+wire        sdram_ready;
+wire [15:0] sdram_dout;
+reg  [15:0] sdram_din;
+reg         sdram_we;
+reg         sdram_rd;
+reg  [15:0] cfg = 0;
+
+always @(posedge clk_sys) begin
+	reg [4:0] state = 0;
+
+	sdram_rd <= 0;
+	sdram_we <= 0;
+
+	if(RESET) begin
+		state <= 0;
+		cfg <= 0;
+	end
+	else begin
+		case(state)
+			0: if(sdram_ready) begin
+					cfg <= 0;
+					state      <= state+1'd1;
+				end
+			1: begin
+					sdram_addr <= 'h4000000;
+					sdram_din  <= 3128;
+					sdram_we   <= 1;
+					state      <= state+1'd1;
+				end
+			2: state <= state+1'd1;
+			3: if(sdram_ready) begin
+					sdram_addr <= 'h2000000;
+					sdram_din  <= 2064;
+					sdram_we   <= 1;
+					state      <= state+1'd1;
+				end
+			4: state <= state+1'd1;
+			5: if(sdram_ready) begin
+					sdram_addr <= 'h0000000;
+					sdram_din  <= 1032;
+					sdram_we   <= 1;
+					state      <= state+1'd1;
+				end
+			6: state <= state+1'd1;
+			7: if(sdram_ready) begin
+					sdram_addr <= 'h1000000;
+					sdram_din  <= 12345;
+					sdram_we   <= 1;
+					state      <= state+1'd1;
+				end
+			8: state <= state+1'd1;
+			9: if(sdram_ready) begin
+					sdram_addr <= 'h4000000;
+					sdram_rd   <= 1;
+					state      <= state+1'd1;
+				end
+			10: state <= state+1'd1;
+			11: if(sdram_ready) begin
+					cfg[2]     <= (sdram_dout == 3128);
+					sdram_addr <= 'h2000000;
+					sdram_rd   <= 1;
+					state      <= state+1'd1;
+				end
+			12: state <= state+1'd1;
+			13: if(sdram_ready) begin
+					cfg[1]     <= (sdram_dout == 2064);
+					sdram_addr <= 'h0000000;
+					sdram_rd   <= 1;
+					state      <= state+1'd1;
+				end
+			14: state <= state+1'd1;
+			15: if(sdram_ready) begin
+					cfg[0]     <= (sdram_dout == 1032);
+					cfg[15]    <= 1;
+					state      <= state+1'd1;
+				end
+			16: begin
+					sdram_addr <= addr[24:0];
+					sdram_din  <= 0;
+					sdram_we   <= we;
+				end
+		endcase
+	end
+end
 
 ddram ddr
 (
@@ -225,7 +330,7 @@ reg [28:0] addr = 0;
 always @(posedge clk_sys) begin
 	reg [4:0] cnt = 9;
 
-	if(~RESET) begin
+	if(~RESET & cfg[15]) begin
 		cnt <= cnt + 1'b1;
 		we <= &cnt;
 		if(cnt == 8) addr <= addr + 1'd1;
@@ -234,6 +339,10 @@ end
 
 
 /////////////////////   VIDEO   ///////////////////
+
+wire PAL = status[4];
+wire FB  = status[5];
+wire [2:0] led = status[8:6];
 
 reg   [9:0] hc;
 reg   [9:0] vc;
@@ -250,7 +359,7 @@ always @(posedge CLK_VIDEO) begin
 		else ce_pix <= ~ce_pix;
 
 	if(ce_pix) begin
-		if(hc == 639) begin
+		if(hc == 637) begin
 			hc <= 0;
 			if(vc == (PAL ? (forced_scandoubler ? 623 : 311) : (forced_scandoubler ? 523 : 261))) begin 
 				vc <= 0;
@@ -273,26 +382,29 @@ reg VSync;
 
 reg ce_pix;
 always @(posedge CLK_VIDEO) begin
-	if (hc == 550) HBlank <= 1;
+	if (hc == 529) HBlank <= 1;
 		else if (hc == 0) HBlank <= 0;
 
-	if (hc == 570) HSync <= 1;
-		else if (hc == 602) HSync <= 0;
+	if (hc == 544) begin
+		HSync <= 1;
 
-	if(PAL) begin
-		if(vc == (forced_scandoubler ? 609 : 304)) VSync <= 1;
-			else if (vc == (forced_scandoubler ? 617 : 308)) VSync <= 0;
+		if(PAL) begin
+			if(vc == (forced_scandoubler ? 609 : 304)) VSync <= 1;
+				else if (vc == (forced_scandoubler ? 617 : 308)) VSync <= 0;
 
-		if(vc == (forced_scandoubler ? 601 : 300)) VBlank <= 1;
-			else if (vc == 0) VBlank <= 0;
+			if(vc == (forced_scandoubler ? 601 : 300)) VBlank <= 1;
+				else if (vc == 0) VBlank <= 0;
+		end
+		else begin
+			if(vc == (forced_scandoubler ? 490 : 245)) VSync <= 1;
+				else if (vc == (forced_scandoubler ? 496 : 248)) VSync <= 0;
+
+			if(vc == (forced_scandoubler ? 480 : 240)) VBlank <= 1;
+				else if (vc == 0) VBlank <= 0;
+		end
 	end
-	else begin
-		if(vc == (forced_scandoubler ? 490 : 245)) VSync <= 1;
-			else if (vc == (forced_scandoubler ? 496 : 248)) VSync <= 0;
-
-		if(vc == (forced_scandoubler ? 480 : 240)) VBlank <= 1;
-			else if (vc == 0) VBlank <= 0;
-	end
+	
+	if (hc == 590) HSync <= 0;
 end
 
 reg  [7:0] cos_out;

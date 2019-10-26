@@ -40,14 +40,9 @@ wire [5:0] yuv_full[225] = '{
   6'd63
 };
 
-//wire [5:0] red   = din[23:18];
-//wire [5:0] green = din[15:10];
-//wire [5:0] blue  = din[7:2];
-
-wire [7:0] red   = din[23:16];
-wire [7:0] green = din[15:8];
-wire [7:0] blue  = din[7:0];
-
+wire [5:0] red   = din[23:18];
+wire [5:0] green = din[15:10];
+wire [5:0] blue  = din[7:2];
 
 // http://marsee101.blog19.fc2.com/blog-entry-2311.html
 // Y  =  16 + 0.257*R + 0.504*G + 0.098*B (Y  =  0.299*R + 0.587*G + 0.114*B)
