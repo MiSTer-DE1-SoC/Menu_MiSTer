@@ -41,6 +41,7 @@ module sdram
    output            SDRAM_nWE,   // write enable
    output            SDRAM_nRAS,  // row address select
    output            SDRAM_nCAS,  // columns address select
+   output            SDRAM_CLK,
    output            SDRAM_CKE,   // clock enable
                                   //
    input       [1:0] wtbt,        // 16bit mode:  bit1 - write high byte, bit0 - write low byte,
@@ -62,7 +63,7 @@ assign SDRAM_nWE  = command[0];
 assign SDRAM_CKE  = 1;
 assign {SDRAM_DQMH,SDRAM_DQML} = SDRAM_A[12:11];
 
-assign dout       = latched ? data_l : data_d;
+assign dout       = save_addr[0] ? {data[7:0],     data[15:8]}     : {data[15:8],     data[7:0]};
 
 // no burst configured
 localparam BURST_LENGTH        = 3'b000;   // 000=1, 001=2, 010=4, 011=8
@@ -91,10 +92,7 @@ reg  [2:0] command = CMD_NOP;
 reg [26:0] save_addr;
 reg        chip = 0;
 
-reg        latched;
 reg [15:0] data;
-wire[15:0] data_l = save_addr[0] ? {data[7:0],     data[15:8]}     : {data[15:8],     data[7:0]};
-wire[15:0] data_d = save_addr[0] ? {SDRAM_DQ[7:0], SDRAM_DQ[15:8]} : {SDRAM_DQ[15:8], SDRAM_DQ[7:0]};
 
 typedef enum
 {
@@ -125,9 +123,7 @@ always @(posedge clk) begin
 
 	data_ready_delay <= {1'b0, data_ready_delay[CAS_LATENCY:1]};
 
-	// make it ready 1T in advance
-	if(data_ready_delay[1]) {latched, ready} <= {1'b0, 1'b1};
-	if(data_ready_delay[0]) {latched, data}  <= {1'b1, SDRAM_DQ};
+	if(data_ready_delay[0]) {ready, data}  <= {1'b1, SDRAM_DQ};
 
 	case(state)
 		STATE_STARTUP: begin
@@ -271,5 +267,30 @@ always @(posedge clk) begin
 	old_rd <= rd;
 	if(rd & ~old_rd) {ready, new_rd} <= {1'b0, 1'b1};
 end
+
+altddio_out
+#(
+	.extend_oe_disable("OFF"),
+	.intended_device_family("Cyclone V"),
+	.invert_output("OFF"),
+	.lpm_hint("UNUSED"),
+	.lpm_type("altddio_out"),
+	.oe_reg("UNREGISTERED"),
+	.power_up_high("OFF"),
+	.width(1)
+)
+sdramclk_ddr
+(
+	.datain_h(1'b0),
+	.datain_l(1'b1),
+	.outclock(clk),
+	.dataout(SDRAM_CLK),
+	.aclr(1'b0),
+	.aset(1'b0),
+	.oe(1'b1),
+	.outclocken(1'b1),
+	.sclr(1'b0),
+	.sset(1'b0)
+);
 
 endmodule

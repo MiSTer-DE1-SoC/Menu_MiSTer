@@ -1,8 +1,12 @@
 //============================================================================
 //
-//  MiSTer hardware abstraction module (based on Minimig Alexey Melnikov  
-//  20191014 -	 b3e32d59d96a3ca1216e73cf45af723bbd9c6da7)
-//  (c)2019 mazsola2k@modernhackers.com / http://www.modernhackers.com
+//  DE10-Standard / DE1-SoC / Arrow SoCKit MiSTer hardware abstraction module
+//  2019-12-20
+//  Ported (c)2019 by mazsola2k@modernhackers.com / http://www.modernhackers.com
+//
+//
+//  MiSTer hardware abstraction module
+//  (c)2017-2019 Alexey Melnikov
 //
 //  This program is free software; you can redistribute it and/or modify it
 //  under the terms of the GNU General Public License as published by the Free
@@ -74,7 +78,7 @@ module sys_top
 	//output  [5:0] VGA_R,
 	//output  [5:0] VGA_G,
 	//output  [5:0] VGA_B,
-	//DE10-standard / DE1-soc kit board implementation has to contian 8 / color otherwise the brightness is low on the DAC
+	//DE10-standard / DE1-soc kit / Arrow SoCKit board implementation has to contian 8 / color otherwise the brightness is low on the DAC
 	output  [7:0] VGA_R,
 	output  [7:0] VGA_G,
 	output  [7:0] VGA_B,
@@ -82,20 +86,20 @@ module sys_top
 	output		  VGA_VS,
 	//DE10-nano implementation for VGA expansion daugher board
 	//input         VGA_EN,  // active low
-	//DE10-standard / DE1-soc kit implementation for on-board VGA DAC route - this will be overrided by code to set value to 0
+	//DE10-standard / DE1-soc kit / / Arrow SoCKit implementation for on-board VGA DAC route - this will be overrided by code to set value to 0
 	inout         VGA_EN,  // active low
-	//DE10-standard / DE1-soc kit implementation for on-board VGA DAC route - additional pins
+	//DE10-standard / DE1-soc kit / / Arrow SoCKit implementation for on-board VGA DAC route - additional pins
 	output 		  VGA_CLK,
 	output 		  VGA_BLANK_N,
 	output 		  VGA_SYNC_N,
-
+	
+	//DE10-nano implementation for VGA expansion daugher board including analoge audio output jack
 	/////////// AUDIO //////////
 	output		  AUDIO_L,
 	output		  AUDIO_R,
 	output		  AUDIO_SPDIF,
 	
-	
-	//DE10-standard / DE1-soc kit implementation for on-board Wolfson WM8731 Audio DAC
+	//DE10-standard / DE1-soc kit implementation for on-board Wolfson WM8731 Audio DAC / SSM2603 for Arrow SoCKit
 	// Audio CODEC
 	inout wire    AUD_ADCLRCK,  // Audio CODEC ADC LR Clock
 	input wire    AUD_ADCDAT,   // Audio CODEC ADC Data
@@ -103,11 +107,10 @@ module sys_top
 	output wire   AUD_DACDAT,   // Audio CODEC DAC Data
    inout wire    AUD_BCLK,     // Audio CODEC Bit-Stream Clock
    output wire   AUD_XCK,      // Audio CODEC Chip Clock
-
+	
 	// I2C
    inout wire    I2C_SDAT,     // I2C Data
    output wire   I2C_SCLK,     // I2C Clock
-	
 
 	//////////// SDIO ///////////
 	inout   [3:0] SDIO_DAT,
@@ -143,6 +146,7 @@ module sys_top
 	input   [1:0] KEY,
 
 	////////// MB SWITCH ////////
+	//DE10-standard / DE1-soc kit / Arrow SoCKit board implementation
 	inout   [3:0] SW,
 
 	////////// MB LED ///////////
@@ -152,9 +156,9 @@ module sys_top
 	inout   [6:0] USER_IO
 );
 
-
-	// DE10-Stanard VGA mode
-   assign SW[3] = 1'b0;		//necessary for VGA modes
+// DE10-Stanard / DE1-SoC / Arrow SoCKit VGA mode
+assign SW[3] = 1'b0;		//necessary for VGA mode
+assign VGA_EN = 1'b0;		//enable VGA mode when VGA_EN is low
 
 //////////////////////  Secondary SD  ///////////////////////////////////
 
@@ -476,7 +480,7 @@ always @(posedge FPGA_CLK2_50) begin
 end
 
 wire clk_100m;
-wire clk_hdmi  = ~hdmi_clk_out;  // Internal HDMI clock, inverted in relation to external clock
+wire clk_hdmi  = hdmi_clk_out;
 wire clk_audio = FPGA_CLK3_50;
 wire clk_pal   = FPGA_CLK3_50;
 
@@ -869,7 +873,7 @@ osd hdmi_osd
 
 reg [23:0] dv_data;
 reg        dv_hs, dv_vs, dv_de;
-always @(negedge clk_vid) begin
+always @(posedge clk_vid) begin
 	reg [23:0] dv_d1, dv_d2;
 	reg        dv_de1, dv_de2, dv_hs1, dv_hs2, dv_vs1, dv_vs2;
 	reg [12:0] vsz, vcnt;
@@ -908,11 +912,64 @@ always @(negedge clk_vid) begin
 	dv_vs  <= dv_vs2;
 end
 
-assign HDMI_TX_CLK = direct_video ? clk_vid : hdmi_clk_out;
-assign HDMI_TX_HS  = direct_video ? dv_hs   : hdmi_hs_osd;
-assign HDMI_TX_VS  = direct_video ? dv_vs   : hdmi_vs_osd;
-assign HDMI_TX_DE  = direct_video ? dv_de   : hdmi_de_osd;
-assign HDMI_TX_D   = direct_video ? dv_data : hdmi_data_osd;
+wire hdmi_tx_clk;
+cyclonev_clkselect hdmi_clk_sw
+( 
+	.clkselect({1'b1, direct_video}),
+	.inclk({clk_vid, hdmi_clk_out, 2'b00}),
+	.outclk(hdmi_tx_clk)
+);
+
+altddio_out
+#(
+	.extend_oe_disable("OFF"),
+	.intended_device_family("Cyclone V"),
+	.invert_output("OFF"),
+	.lpm_hint("UNUSED"),
+	.lpm_type("altddio_out"),
+	.oe_reg("UNREGISTERED"),
+	.power_up_high("OFF"),
+	.width(1)
+)
+hdmiclk_ddr
+(
+	.datain_h(1'b0),
+	.datain_l(1'b1),
+	.outclock(hdmi_tx_clk),
+	//.dataout(HDMI_TX_CLK),
+	.dataout(VGA_CLK),
+	.aclr(1'b0),
+	.aset(1'b0),
+	.oe(1'b1),
+	.outclocken(1'b1),
+	.sclr(1'b0),
+	.sset(1'b0)
+);
+
+reg hdmi_out_hs;
+reg hdmi_out_vs;
+reg hdmi_out_de;
+reg [23:0] hdmi_out_d;
+
+always @(posedge hdmi_tx_clk) begin
+	reg hs,vs,de;
+	reg [23:0] d;
+	
+	hs <= direct_video ? dv_hs   : hdmi_hs_osd;
+	vs <= direct_video ? dv_vs   : hdmi_vs_osd;
+	de <= direct_video ? dv_de   : hdmi_de_osd;
+	d  <= direct_video ? dv_data : hdmi_data_osd;
+
+	hdmi_out_hs <= hs;
+	hdmi_out_vs <= vs;
+	hdmi_out_de <= de;
+	hdmi_out_d  <= d;
+end
+
+assign HDMI_TX_HS = hdmi_out_hs;
+assign HDMI_TX_VS = hdmi_out_vs;
+assign HDMI_TX_DE = hdmi_out_de;
+assign HDMI_TX_D  = hdmi_out_d;
 
 /////////////////////////  VGA output  //////////////////////////////////
 
@@ -974,9 +1031,6 @@ csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 	wire vs1 = vga_scaler ? hdmi_vs_osd : vga_vs_osd;
 	wire hs1 = vga_scaler ? hdmi_hs_osd : vga_hs_osd;
 	wire cs1 = vga_scaler ? hdmi_cs_osd : vga_cs_osd;
-	
-	//DE10-standard implementation for on-board VGA DAC route - assign values
-   assign VGA_EN = 1'b0;		//enable VGA mode when VGA_EN is low
 
 	//assign VGA_VS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? 1'b1 : ~vs1;
 	//assign VGA_HS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? ~cs1 : ~hs1;
@@ -984,18 +1038,15 @@ csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
 	//assign VGA_G  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[15:10];
 	//assign VGA_B  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[7:2];
 	
-	
-	assign VGA_VS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? 1'b1 : ~vs1;
+   assign VGA_VS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? 1'b1 : ~vs1;
 	assign VGA_HS = (VGA_EN | SW[3]) ? 1'bZ      : csync_en ? ~cs1 : ~hs1;
 	assign VGA_R  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[23:16];
 	assign VGA_G  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[15:8];
 	assign VGA_B  = (VGA_EN | SW[3]) ? 6'bZZZZZZ : vga_o[7:0];
 	
-	
 	assign VGA_BLANK_N = VGA_HS && VGA_VS; //VGA DAC additional required pin
-   assign VGA_SYNC_N = 0; 						//VGA DAC additional required pin
-   assign VGA_CLK = HDMI_TX_CLK; 			//has to define a clock to VGA DAC clock otherwise the picture is noisy
-	
+	assign VGA_SYNC_N = 0; 						//VGA DAC additional required pin
+	//assign VGA_CLK = HDMI_TX_CLK; 			//has to define a clock to VGA DAC clock otherwise the picture is noisy
 `endif
 
 /////////////////////////  Audio output  ////////////////////////////////
@@ -1093,7 +1144,7 @@ alsa alsa
 	.pcm_r(alsa_r)
 );
 
-//// DE10-Standard / DE1-SoC audio codec i2c ////
+//// DE10-Standard / DE1-SoC / Arrow SoCKit audio codec i2c ////
 wire exchan;
 wire mix;
 assign exchan = 1'b0;
@@ -1116,7 +1167,6 @@ audio_top audio_top (
   .i2c_sclk     (I2C_SCLK),  	// CODEC config clock
   .i2c_sdat     (I2C_SDAT),   // CODEC config data
 );
-
 
 ////////////////  User I/O (USB 3.0 connector) /////////////////////////
 
